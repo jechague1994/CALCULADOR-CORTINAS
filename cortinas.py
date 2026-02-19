@@ -39,15 +39,25 @@ def recomendar_motor(tipo, m2, usos):
         if m2 <= 42: return ["Tb 500t"]
         return ["Tb 800t"]
 
-def calcular_estructura_acero(ancho_m, alto_m):
+def calcular_estructura_acero(ancho_m, alto_m, tipo_tablilla):
+    # Regla especial para Inyectada 125mm: Eje mínimo 152mm
+    if tipo_tablilla == "Acero Inyectado 125mm":
+        if ancho_m < 8 and alto_m <= 3: 
+            return "Eje 152mm (Mínimo p/ Lama 125)", "Guías 80x60mm"
+        elif ancho_m >= 8:
+            return "Eje 250mm", "Guías 150x60mm"
+        else:
+            return "Eje 200mm", "Guías 100x60mm"
+
+    # Reglas estándar para el resto
     if ancho_m < 5 and alto_m <= 3: return "Eje redondo 101mm", "Guías 60x50mm"
     if ancho_m < 6 and alto_m <= 3: return "Eje 127mm", "Guías 80x60mm"
     if ancho_m < 7 and alto_m <= 3: return "Eje 152mm", "Guías 80x60mm"
     if ancho_m < 8 and alto_m <= 3: return "Eje 200mm", "Guías 100x60mm"
     return "Eje 250mm", "Guías 150x60mm"
 
-# --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Grupo Magallan", layout="wide")
+# --- CONFIGURACIÓN DE INTERFAZ ---
+st.set_page_config(page_title="Grupo Magallan - Calculador", layout="wide")
 
 # Lógica del Logo
 archivo_logo = "logo_magallan.png"
@@ -59,61 +69,83 @@ with col1:
     if logo_existe:
         st.image(archivo_logo, width=150)
     else:
-        st.error("Logo no hallado")
+        st.error("Archivo logo_magallan.png no encontrado")
+
 with col2:
     st.title("Grupo Magallan: Calculador Técnico")
 
-# --- SIDEBAR ---
+# --- SIDEBAR (ENTRADA DE DATOS) ---
 with st.sidebar:
-    st.header("⚙️ Entrada (Mts)")
-    tipo = st.selectbox("Tablilla:", list(TABLILLAS.keys()))
-    ancho = st.number_input("Ancho (m):", 0.1, 20.0, 4.0)
-    alto_v = st.number_input("Alto Vano (m):", 0.1, 20.0, 3.0)
-    usos = st.number_input("Usos/Día:", 1, 50, 5)
-    enrollar = st.checkbox("Sumar enrollado", True)
+    st.header("⚙️ Medidas en Metros")
+    tipo_sel = st.selectbox("Tipo de Tablilla:", list(TABLILLAS.keys()))
+    ancho_m = st.number_input("Ancho del Vano (m):", min_value=0.1, value=4.0, step=0.1)
+    alto_v = st.number_input("Alto del Vano (m):", min_value=0.1, value=3.0, step=0.1)
+    usos_dia = st.number_input("Accionamientos al día:", min_value=1, value=5)
+    agregar_enrollado = st.checkbox("Incluir excedente de enrollado", value=True)
 
-# --- CÁLCULOS ---
-fam = TABLILLAS[tipo]["familia"]
-extra = (0.30 if fam == "alu55" else 0.40) if enrollar else 0
-alto_f = alto_v + extra
-m2 = ancho * alto_f
-peso = m2 * TABLILLAS[tipo]["peso"]
-eje, guias = (TABLILLAS[tipo]["eje"], TABLILLAS[tipo]["guias"]) if "alu" in fam else calcular_estructura_acero(ancho, alto_v)
-motores = recomendar_motor(tipo, m2, usos)
+# --- CÁLCULOS TÉCNICOS ---
+familia = TABLILLAS[tipo_sel]["familia"]
+excedente_m = (0.30 if familia == "alu55" else 0.40) if agregar_enrollado else 0
+alto_final_m = alto_v + excedente_m
+superficie_m2 = ancho_m * alto_final_m
+peso_t = superficie_m2 * TABLILLAS[tipo_sel]["peso"]
 
-# --- RESULTADOS ---
+# Determinación de Eje y Guías
+if "alu" in familia:
+    eje_f, guias_f = (TABLILLAS[tipo_sel]["eje"], TABLILLAS[tipo_sel]["guias"])
+else:
+    eje_f, guias_f = calcular_estructura_acero(ancho_m, alto_v, tipo_sel)
+
+motores = recomendar_motor(tipo_sel, superficie_m2, usos_dia)
+
+# --- PANEL DE RESULTADOS ---
 st.divider()
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("Superficie", f"{m2:.2f} m²")
-k2.metric("Peso", f"{peso:.1f} kg")
-k3.info(f"Eje: {eje}")
-k4.info(f"Guías: {guias}")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Superficie Real", f"{superficie_m2:.2f} m²")
+c2.metric("Peso Estimado", f"{peso_t:.1f} kg")
+c3.info(f"*Eje:*\n{eje_f}")
+c4.info(f"*Guías:*\n{guias_f}")
 
-st.subheader("🚀 Motores")
-for m in motores: st.success(m)
+st.subheader("🚀 Motorización Recomendada")
+for m in motores:
+    st.success(f"Opción: {m}")
 
-# --- PDF ---
-if st.button("Generar PDF"):
-    pdf = FPDF()
-    pdf.add_page()
-    if logo_existe:
-        pdf.image(archivo_logo, 10, 8, 30)
-        pdf.set_x(45)
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "GRUPO MAGALLAN - FICHA TECNICA", ln=True)
-    pdf.ln(10)
-    pdf.set_font("Arial", size=10)
-    
-    resumen = [
-        ("Material", tipo), ("Vano", f"{ancho}x{alto_v}m"),
-        ("Alto Final", f"{alto_f}m"), ("Superficie", f"{m2:.2f}m2"),
-        ("Eje", eje), ("Guias", guias), ("Motores", ", ".join(motores))
-    ]
-    
-    for c, v in resumen:
-        pdf.set_font("Arial", "B", 10)
-        pdf.cell(50, 8, c, 1)
-        pdf.set_font("Arial", size=10)
-        pdf.cell(100, 8, str(v), 1, 1)
-    
-    st.download_button("📥 Descargar", pdf.output(dest='S').encode('latin-1'), "Ficha_Magallan.pdf")
+# --- GENERACIÓN DE PDF ---
+if st.button("Generar Ficha de Fabricación"):
+    try:
+        pdf = FPDF()
+        pdf.add_page()
+        if logo_existe:
+            pdf.image(archivo_logo, 10, 8, 30)
+            pdf.set_x(45)
+        
+        pdf.set_font("Arial", "B", 18)
+        pdf.set_text_color(0, 51, 102)
+        pdf.cell(0, 15, "GRUPO MAGALLAN - ORDEN TÉCNICA", ln=True)
+        pdf.ln(5)
+        
+        pdf.set_font("Arial", "B", 11)
+        pdf.set_text_color(0, 0, 0)
+        
+        datos = [
+            ("Lama Seleccionada", tipo_sel),
+            ("Medida Vano", f"{ancho_m:.2f} x {alto_v:.2f} m"),
+            ("Superficie Total", f"{superficie_m2:.2f} m2"),
+            ("Peso del Paño", f"{peso_t:.1f} kg"),
+            ("Uso Diario", f"{usos_dia} accionamientos"),
+            ("EJE REQUERIDO", eje_f.upper()),
+            ("GUÍAS REQUERIDAS", guias_f.upper()),
+            ("MOTORES SUGERIDOS", ", ".join(motores))
+        ]
+
+        for etiqueta, valor in datos:
+            pdf.set_font("Arial", "B", 10)
+            pdf.cell(60, 9, etiqueta, 1)
+            pdf.set_font("Arial", size=10)
+            pdf.cell(130, 9, str(valor), 1, 1)
+
+        # Usamos un método seguro para descargar en Streamlit Cloud
+        pdf_output = pdf.output(dest='S').encode('latin-1')
+        st.download_button("📥 Descargar PDF", pdf_output, f"Orden_{tipo_sel}.pdf", "application/pdf")
+    except Exception as e:
+        st.error(f"Error al generar el documento: {e}")
