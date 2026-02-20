@@ -14,121 +14,108 @@ TABLILLAS = {
 }
 
 def recomendar_motor(tipo, m2, usos):
-    familia = TABLILLAS[tipo]["familia"]
-    if familia == "alu55": return ["Motor Tubular 60"]
-    if familia == "alu77": return ["Motor Tubular 140"]
+    fam = TABLILLAS[tipo]["familia"]
+    if fam == "alu55": return ["Motor Tubular 60"]
+    if fam == "alu77": return ["Motor Tubular 140"]
     if usos <= 7:
         if m2 <= 11: return ["Motor Tubular 140"]
-        if m2 <= 18: return ["Motor Paralelo 600"]
+        elif m2 <= 18: return ["Motor Paralelo 600"]
         elif m2 <= 28: return ["Motor Paralelo 800"]
         elif m2 <= 32: return ["Motor Paralelo 1000"]
         elif m2 <= 42: return ["Motor Paralelo 1500"]
         return ["Consultar industrial"]
     elif 8 <= usos <= 13:
         if m2 <= 14: return ["Sb 250m", "Tb 250m"]
-        if m2 <= 18: return ["Sb 300m", "Tb 320m"]
-        if m2 <= 22: return ["SB 350m"]
-        if m2 <= 28: return ["Tb 400m", "Sb 400m"]
-        if m2 <= 38: return ["Tb 500m"]
+        elif m2 <= 18: return ["Sb 300m", "Tb 320m"]
+        elif m2 <= 28: return ["Tb 400m", "Sb 400m"]
         return ["Tb 800m"]
     else:
         if m2 <= 18: return ["Sb 250t", "Tb 250t"]
-        if m2 <= 22: return ["Sb 300t", "Tb 320t"]
-        if m2 <= 26: return ["Sb 350t"]
-        if m2 <= 32: return ["Tb 400t", "Sb 400t"]
-        if m2 <= 42: return ["Tb 500t"]
+        elif m2 <= 32: return ["Tb 400t", "Sb 400t"]
         return ["Tb 800t"]
 
-def calcular_estructura_acero(ancho_m, alto_m, tipo_tablilla):
-    if tipo_tablilla == "Acero Inyectado 125mm":
-        # Regla: Lama 125mm -> Eje mínimo 152mm
-        return ("Eje 152mm (Mínimo p/ Lama 125)" if ancho_m < 8 else "Eje 250mm"), "Guías 150x60mm"
-    if ancho_m < 5 and alto_m <= 3: return "Eje redondo 101mm", "Guías 60x50mm"
-    if ancho_m < 6 and alto_m <= 3: return "Eje 127mm", "Guías 80x60mm"
-    if ancho_m < 7 and alto_m <= 3: return "Eje 152mm", "Guías 80x60mm"
+def calcular_estructura(ancho, alto, tipo):
+    if tipo == "Acero Inyectado 125mm":
+        return ("Eje 152mm (Mín p/ 125)" if ancho < 8 else "Eje 250mm"), "Guías 150x60mm"
+    if ancho < 5 and alto <= 3: return "Eje redondo 101mm", "Guías 60x50mm"
+    if ancho < 7 and alto <= 3: return "Eje 152mm", "Guías 80x60mm"
     return "Eje 200mm", "Guías 100x60mm"
 
-# --- CONFIGURACIÓN DE PÁGINA ---
+# --- INTERFAZ ---
 st.set_page_config(page_title="Grupo Magallan", layout="wide")
 
-# Gestión del Logo
-archivo_logo = "logo_magallan.png"
-col1, col2 = st.columns([1, 4])
-with col1:
-    if os.path.exists(archivo_logo):
-        st.image(archivo_logo, width=150)
-with col2:
-    st.title("Grupo Magallan: Gestión Técnica y Comercial")
-
-# --- SIDEBAR GLOBAL ---
+# Sidebar
 with st.sidebar:
     st.header("💵 Mercado")
-    valor_dolar = st.number_input("Cotización Dólar (ARS):", min_value=1.0, value=1450.0, step=10.0)
+    usd_blue = st.number_input("Dólar Hoy (ARS):", 1.0, 3000.0, 1450.0)
     st.divider()
-    st.header("⚙️ Parámetros Cortina")
-    tipo_sel = st.selectbox("Tipo de Tablilla:", list(TABLILLAS.keys()))
-    ancho_m = st.number_input("Ancho Vano (m):", 0.1, 20.0, 4.0)
-    alto_v = st.number_input("Alto Vano (m):", 0.1, 20.0, 3.0)
-    usos_dia = st.number_input("Usos por día:", 1, 100, 5)
+    st.header("⚙️ Medidas")
+    tipo_sel = st.selectbox("Tablilla:", list(TABLILLAS.keys()))
+    ancho_m = st.number_input("Ancho (m):", 0.1, 20.0, 4.0)
+    alto_v = st.number_input("Alto (m):", 0.1, 20.0, 3.0)
+    usos = st.number_input("Usos/día:", 1, 100, 5)
     enrollar = st.checkbox("Sumar enrollado", True)
 
+# Cálculos Técnicos
+fam = TABLILLAS[tipo_sel]["familia"]
+m2 = ancho_m * (alto_v + (0.3 if fam=="alu55" else 0.4) if enrollar else alto_v)
+peso = m2 * TABLILLAS[tipo_sel]["peso"]
+eje, guias = (TABLILLAS[tipo_sel]["eje"], TABLILLAS[tipo_sel]["guias"]) if "alu" in fam else calcular_estructura(ancho_m, alto_v, tipo_sel)
+
 # --- PESTAÑAS ---
-tab_tec, tab_precios = st.tabs(["📋 Calculador Técnico", "💰 Lista de Precios"])
+t1, t2 = st.tabs(["📋 Técnico", "💰 Precios y Cotización"])
 
-with tab_tec:
-    fam = TABLILLAS[tipo_sel]["familia"]
-    extra = (0.30 if fam == "alu55" else 0.40) if enrollar else 0
-    alto_f = alto_v + extra
-    m2 = ancho_m * alto_f
-    peso = m2 * TABLILLAS[tipo_sel]["peso"]
-    eje, guias = (TABLILLAS[tipo_sel]["eje"], TABLILLAS[tipo_sel]["guias"]) if "alu" in fam else calcular_estructura_acero(ancho_m, alto_v, tipo_sel)
-    motores = recomendar_motor(tipo_sel, m2, usos_dia)
-
-    st.divider()
-    res1, res2, res3, res4 = st.columns(4)
-    res1.metric("Superficie Total", f"{m2:.2f} m²")
-    res2.metric("Peso Estimado", f"{peso:.1f} kg")
-    res3.info(f"*Eje:*\n{eje}")
-    res4.info(f"*Guías:*\n{guias}")
-    
+with t1:
+    col_a, col_b, col_c = st.columns(3)
+    col_a.metric("Superficie", f"{m2:.2f} m²")
+    col_b.metric("Peso", f"{peso:.1f} kg")
+    col_c.info(f"*Eje:* {eje}\n\n*Guías:* {guias}")
     st.subheader("🚀 Motores Sugeridos")
-    for m in motores:
-        st.success(f"Opción: {m}")
+    for m in recomendar_motor(tipo_sel, m2, usos): st.success(m)
 
-with tab_precios:
-    st.subheader(f"🔍 Buscador de Productos (Dólar: ${valor_dolar:,.0f} ARS)")
-    archivo_precios = "precios.xlsx"
-    
-    if os.path.exists(archivo_precios):
-        try:
-            df = pd.read_excel(archivo_precios)
-            df.columns = df.columns.str.strip() # Limpieza de títulos
+with t2:
+    st.subheader(f"🔍 Consulta de Precios (Dólar: ${usd_blue})")
+    if os.path.exists("precios.xlsx"):
+        # LEER EXCEL: Saltamos las primeras 2 filas porque tus títulos están en la fila 3
+        df = pd.read_excel("precios.xlsx", skiprows=2)
+        df.columns = df.columns.str.strip() # Limpiamos espacios en nombres de columnas
+
+        if 'Producto' in df.columns and 'Precio' in df.columns:
+            busqueda = st.text_input("Buscar producto:")
             
-            if 'Producto' in df.columns and 'Precio' in df.columns:
-                # Conversión dinámica con el valor de la Sidebar
-                df['Precio'] = pd.to_numeric(df['Precio'], errors='coerce')
-                df['Precio ARS ($)'] = df['Precio'] * valor_dolar
+            # Filtro
+            if busqueda:
+                df = df[df['Producto'].astype(str).str.contains(busqueda, case=False, na=False)]
+            
+            # Cálculos de moneda
+            df['Precio USD'] = pd.to_numeric(df['Precio'], errors='coerce')
+            df['Total ARS ($)'] = df['Precio USD'] * usd_blue
+            
+            # --- NUEVA FUNCIÓN: Cotizador rápido ---
+            st.write("---")
+            st.caption("Selecciona un producto para calcular costo total basado en las medidas de la izquierda:")
+            sel_prod = st.selectbox("Calcular para:", ["Ninguno"] + df['Producto'].tolist())
+            
+            if sel_prod != "Ninguno":
+                row = df[df['Producto'] == sel_prod].iloc[0]
+                precio_u = row['Precio USD']
+                unidad = str(row['Unidad']).upper() if 'Unidad' in df.columns else "UN"
                 
-                # Columnas adicionales (como Unidad) si existen
-                columnas_ver = ['Producto', 'Precio', 'Precio ARS ($)']
-                if 'Unidad' in df.columns:
-                    columnas_ver.append('Unidad')
-
-                busqueda = st.text_input("Filtrar por nombre:")
+                # Si es MT2, multiplicamos por la superficie calculada
+                cantidad = m2 if "MT2" in unidad else 1
+                total_final = precio_u * cantidad * usd_blue
                 
-                # Formateo visual
-                df_mostrar = df.copy()
-                df_mostrar['Precio'] = df_mostrar['Precio'].map('USD {:,.2f}'.format)
-                df_mostrar['Precio ARS ($)'] = df_mostrar['Precio ARS ($)'].map('$ {:,.2f}'.format)
+                c1, c2 = st.columns(2)
+                c1.warning(f"Costo Unitario: USD {precio_u:.2f}")
+                c2.error(f"TOTAL ESTIMADO ({unidad}): $ {total_final:,.2f} ARS")
 
-                if busqueda:
-                    resultado = df_mostrar[df_mostrar['Producto'].astype(str).str.contains(busqueda, case=False, na=False)]
-                    st.dataframe(resultado[columnas_ver], use_container_width=True, hide_index=True)
-                else:
-                    st.dataframe(df_mostrar[columnas_ver], use_container_width=True, hide_index=True)
-            else:
-                st.error("El Excel debe tener las columnas 'Producto' y 'Precio'.")
-        except Exception as e:
-            st.error(f"Error técnico: {e}")
+            st.write("---")
+            # Mostrar tabla formateada
+            df_vis = df.copy()
+            df_vis['Precio USD'] = df_vis['Precio USD'].map('{:,.2f}'.format)
+            df_vis['Total ARS ($)'] = df_vis['Total ARS ($)'].map('$ {:,.2f}'.format)
+            st.dataframe(df_vis[['Producto', 'Precio USD', 'Total ARS ($)', 'Unidad']], use_container_width=True, hide_index=True)
+        else:
+            st.error("Asegúrate de que en la fila 3 del Excel digan exactamente: 'Producto', 'Precio' y 'Unidad'.")
     else:
-        st.warning("No se encuentra 'precios.xlsx' en la carpeta.")
+        st.warning("No se encontró el archivo 'precios.xlsx'.")
