@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 
-# --- DATOS TÉCNICOS (Mantenemos la lógica de Lama 125mm) ---
+# --- DATOS TÉCNICOS ---
 TABLILLAS = {
     "Tablilla Ciega": {"peso": 14, "familia": "acero"},
     "Tablilla Microperforada": {"peso": 12, "familia": "acero"},
@@ -41,20 +41,17 @@ def recomendar_motor(tipo, m2, usos):
 
 def calcular_estructura_acero(ancho_m, alto_m, tipo_tablilla):
     if tipo_tablilla == "Acero Inyectado 125mm":
-        if ancho_m < 8 and alto_m <= 3: 
-            return "Eje 152mm (Mínimo p/ Lama 125)", "Guías 80x60mm"
-        elif ancho_m >= 8:
-            return "Eje 250mm", "Guías 150x60mm"
-        return "Eje 200mm", "Guías 100x60mm"
+        # Regla: Lama 125mm -> Eje mínimo 152mm
+        return ("Eje 152mm (Mínimo p/ Lama 125)" if ancho_m < 8 else "Eje 250mm"), "Guías 150x60mm"
     if ancho_m < 5 and alto_m <= 3: return "Eje redondo 101mm", "Guías 60x50mm"
     if ancho_m < 6 and alto_m <= 3: return "Eje 127mm", "Guías 80x60mm"
     if ancho_m < 7 and alto_m <= 3: return "Eje 152mm", "Guías 80x60mm"
-    if ancho_m < 8 and alto_m <= 3: return "Eje 200mm", "Guías 100x60mm"
-    return "Eje 250mm", "Guías 150x60mm"
+    return "Eje 200mm", "Guías 100x60mm"
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Grupo Magallan", layout="wide")
 
+# Gestión del Logo
 archivo_logo = "logo_magallan.png"
 col1, col2 = st.columns([1, 4])
 with col1:
@@ -63,18 +60,22 @@ with col1:
 with col2:
     st.title("Grupo Magallan: Gestión Técnica y Comercial")
 
+# --- SIDEBAR GLOBAL ---
+with st.sidebar:
+    st.header("💵 Mercado")
+    valor_dolar = st.number_input("Cotización Dólar (ARS):", min_value=1.0, value=1450.0, step=10.0)
+    st.divider()
+    st.header("⚙️ Parámetros Cortina")
+    tipo_sel = st.selectbox("Tipo de Tablilla:", list(TABLILLAS.keys()))
+    ancho_m = st.number_input("Ancho Vano (m):", 0.1, 20.0, 4.0)
+    alto_v = st.number_input("Alto Vano (m):", 0.1, 20.0, 3.0)
+    usos_dia = st.number_input("Usos por día:", 1, 100, 5)
+    enrollar = st.checkbox("Sumar enrollado", True)
+
 # --- PESTAÑAS ---
 tab_tec, tab_precios = st.tabs(["📋 Calculador Técnico", "💰 Lista de Precios"])
 
 with tab_tec:
-    with st.sidebar:
-        st.header("⚙️ Parámetros")
-        tipo_sel = st.selectbox("Tipo de Tablilla:", list(TABLILLAS.keys()))
-        ancho_m = st.number_input("Ancho Vano (m):", 0.1, 20.0, 4.0)
-        alto_v = st.number_input("Alto Vano (m):", 0.1, 20.0, 3.0)
-        usos_dia = st.number_input("Usos por día:", 1, 100, 5)
-        enrollar = st.checkbox("Sumar enrollado", True)
-
     fam = TABLILLAS[tipo_sel]["familia"]
     extra = (0.30 if fam == "alu55" else 0.40) if enrollar else 0
     alto_f = alto_v + extra
@@ -95,27 +96,39 @@ with tab_tec:
         st.success(f"Opción: {m}")
 
 with tab_precios:
-    st.subheader("🔍 Buscador de Productos")
+    st.subheader(f"🔍 Buscador de Productos (Dólar: ${valor_dolar:,.0f} ARS)")
     archivo_precios = "precios.xlsx"
     
     if os.path.exists(archivo_precios):
-        # Cargamos el Excel
-        df = pd.read_excel(archivo_precios)
-        
-        # Buscador dinámico
-        busqueda = st.text_input("Buscar por nombre (ej: Lama, Motor, Central...):")
-        
-        if busqueda:
-            # Filtramos en la columna Producto
-            resultado = df[df['Producto'].str.contains(busqueda, case=False, na=False)]
+        try:
+            df = pd.read_excel(archivo_precios)
+            df.columns = df.columns.str.strip() # Limpieza de títulos
             
-            if not resultado.empty:
-                # Mostramos Producto, Precio y Unidad
-                st.dataframe(resultado[['Producto', 'Precio', 'Unidad']], use_container_width=True, hide_index=True)
+            if 'Producto' in df.columns and 'Precio' in df.columns:
+                # Conversión dinámica con el valor de la Sidebar
+                df['Precio'] = pd.to_numeric(df['Precio'], errors='coerce')
+                df['Precio ARS ($)'] = df['Precio'] * valor_dolar
+                
+                # Columnas adicionales (como Unidad) si existen
+                columnas_ver = ['Producto', 'Precio', 'Precio ARS ($)']
+                if 'Unidad' in df.columns:
+                    columnas_ver.append('Unidad')
+
+                busqueda = st.text_input("Filtrar por nombre:")
+                
+                # Formateo visual
+                df_mostrar = df.copy()
+                df_mostrar['Precio'] = df_mostrar['Precio'].map('USD {:,.2f}'.format)
+                df_mostrar['Precio ARS ($)'] = df_mostrar['Precio ARS ($)'].map('$ {:,.2f}'.format)
+
+                if busqueda:
+                    resultado = df_mostrar[df_mostrar['Producto'].astype(str).str.contains(busqueda, case=False, na=False)]
+                    st.dataframe(resultado[columnas_ver], use_container_width=True, hide_index=True)
+                else:
+                    st.dataframe(df_mostrar[columnas_ver], use_container_width=True, hide_index=True)
             else:
-                st.warning("No se encontraron coincidencias.")
-        else:
-            st.info("Ingresa un término para buscar o mira la lista completa abajo:")
-            st.dataframe(df[['Producto', 'Precio', 'Unidad']], use_container_width=True, hide_index=True)
+                st.error("El Excel debe tener las columnas 'Producto' y 'Precio'.")
+        except Exception as e:
+            st.error(f"Error técnico: {e}")
     else:
-        st.error("⚠️ No se detectó el archivo 'precios.xlsx' en el repositorio.")
+        st.warning("No se encuentra 'precios.xlsx' en la carpeta.")
