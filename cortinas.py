@@ -73,7 +73,7 @@ st.set_page_config(page_title="Grupo Magallan - Gestión", layout="wide")
 
 with st.sidebar:
     st.header("💵 Mercado")
-    usd_blue = st.number_input("Dólar Hoy (ARS):", min_value=1.0, value=1486.0, step=1.0)
+    usd_blue = st.number_input("Dólar Hoy (ARS):", min_value=1.0, value=1560.0, step=1.0)
     st.divider()
     st.header("⚙️ Medidas del Vano (Mts)")
     tipo_sel = st.selectbox("Tipo de Tablilla:", list(TABLILLAS.keys()))
@@ -134,4 +134,5 @@ with tab_precios:
         except Exception as e:
             st.error(f"Error: {e}")
     else:
+
         st.warning("No se encontró 'precios.xlsx'.")
