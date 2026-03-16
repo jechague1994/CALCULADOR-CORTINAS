@@ -2,188 +2,174 @@ import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime, date
-from fpdf import FPDF
 import plotly.express as px
+from datetime import datetime
 
-# URL del logo oficial de Grupo Magallan
-LOGO_URL = "https://r.jina.ai/i/0586f37648354c4193568c07d3967484"
+# --- 1. CONFIGURACIÓN VISUAL ---
+st.set_page_config(page_title="Magallan Dashboard Pro", layout="wide", page_icon="📈")
 
-# 1. DISEÑO DE INTERFAZ ACTUALIZADO
-st.set_page_config(page_title="Magallan | Gestión Integral", layout="wide")
+COLORES_VENDEDORES = {"Jacqueline": "#FFB6C1", "Jonathan": "#ADD8E6", "Roberto": "#98FB98"}
 
-st.markdown(f"""
-    <style>
-    .stApp {{ background-color: #F4F5F7; }}
-    .ticket-card {{ 
-        background-color: white; padding: 18px; border-radius: 8px; 
-        border-left: 10px solid #DFE1E6; margin-bottom: 12px; 
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05); font-family: sans-serif;
-    }}
-    .status-terminado {{ border-left-color: #36B37E !important; }}
-    .status-atrasado {{ border-left-color: #FF5630 !important; }}
-    .status-proceso {{ border-left-color: #0052CC !important; }}
-    .status-pagado {{ border-left-color: #6554C0 !important; background-color: #EAE6FF !important; }}
-    .sidebar-mag {{ background-color: #FAFBFC; padding: 20px; border-radius: 10px; border: 1px solid #DFE1E6; }}
-    .saldo-badge {{ background-color: #FFFAE6; color: #826a00; padding: 5px 10px; border-radius: 15px; font-weight: bold; }}
-    </style>
-    """, unsafe_allow_html=True)
+st.markdown("""
+<style>
+    div[data-testid="stMetric"] { background-color: white !important; padding: 15px !important; border-radius: 10px !important; border: 1px solid #e2e8f0 !important; }
+    .card-vendedor { background-color: white; border-radius: 10px; padding: 18px; margin-bottom: 12px; border-left: 6px solid #3b82f6; box-shadow: 0 2px 5px rgba(0,0,0,0.08); }
+    .card-demora { background-color: #fef9c3; border-radius: 10px; padding: 18px; margin-bottom: 12px; border-left: 6px solid #facc15; }
+    .card-corp { background-color: #1e293b; color: white; border-radius: 10px; padding: 18px; margin-bottom: 12px; border-left: 6px solid #6366f1; }
+    .monto-alerta { color: #e11d48; font-weight: 800; font-size: 1.2rem; }
+    .monto-corp { color: #818cf8; font-weight: 800; font-size: 1.2rem; }
+</style>
+""", unsafe_allow_html=True)
 
-# 2. GENERADOR DE PDF CON LOGO Y UBICACIÓN
-def generar_pdf_orden(tk):
-    pdf = FPDF()
-    pdf.add_page()
-    try: pdf.image(LOGO_URL, x=10, y=8, w=50)
-    except: pdf.text(10, 15, "GRUPO MAGALLAN")
-    pdf.ln(25)
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, txt=f"ORDEN DE TRABAJO: MAG-{tk['Nro_Ppto']}", ln=True, align='C')
-    pdf.ln(10)
-    
-    pdf.set_font("Arial", size=12)
-    pdf.cell(100, 8, txt=f"Cliente: {tk['Cliente']}")
-    pdf.cell(100, 8, txt=f"Ubicación: {tk.get('Ubicacion', 'No informada')}", ln=True)
-    pdf.cell(100, 8, txt=f"Fecha Entrega: {tk['Fecha_Entrega']}", ln=True)
-    
-    # Cálculos Financieros
-    total = int(tk['Monto_Total_Ars'])
-    pagado = int(tk.get('Pagado_Ars', 0)) if str(tk.get('Pagado_Ars')).isdigit() else 0
-    saldo = total - pagado
-    
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(100, 8, txt=f"TOTAL: ${total}")
-    pdf.cell(100, 8, txt=f"SALDO A COBRAR: ${saldo}", ln=True)
-    
-    pdf.ln(10)
-    pdf.cell(0, 10, txt="Detalle de Materiales / Notas:", ln=True)
-    pdf.set_font("Arial", size=11)
-    pdf.multi_cell(0, 8, txt=str(tk['Materiales_Pendientes']))
-    return pdf.output(dest='S').encode('latin-1')
-
-# 3. CONEXIÓN A GOOGLE SHEETS
-@st.cache_resource
-def iniciar_conexion():
-    return gspread.authorize(Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], 
-        scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    ))
-
-def traer_datos(nombre_hoja):
+# --- 2. CONEXIÓN ---
+@st.cache_resource(ttl=30)
+def conectar_gs():
     try:
-        sh = iniciar_conexion().open("Gestion_Magallan")
-        ws = sh.worksheet(nombre_hoja)
-        return pd.DataFrame(ws.get_all_records()), ws
-    except: return pd.DataFrame(), None
+        info = dict(st.secrets["gcp_service_account"])
+        info["private_key"] = info["private_key"].replace("\\n", "\n")
+        creds = Credentials.from_service_account_info(info, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"Error de conexión: {e}")
+        return None
 
-# 4. SISTEMA DE LOGIN
-if "authenticated" not in st.session_state:
-    col1, col2, col3 = st.columns([1, 1.2, 1])
-    with col2:
-        st.image(LOGO_URL)
-        u = st.selectbox("Usuario", ["---"] + list(st.secrets["usuarios"].keys()))
-        p = st.text_input("Contraseña", type="password")
-        if st.button("ACCEDER AL SISTEMA", use_container_width=True):
-            if u != "---" and str(st.secrets["usuarios"][u]).strip() == p.strip():
-                st.session_state.update({"authenticated": True, "user": u})
-                st.rerun()
-else:
-    # MENÚ LATERAL
-    st.sidebar.image(LOGO_URL, use_container_width=True)
-    st.sidebar.write(f"👷 *Operador:* {st.session_state['user']}")
-    nav = st.sidebar.radio("NAVEGACIÓN", ["📋 Panel de Control", "📈 Reportes", "➕ Nueva Carga"])
-    if st.sidebar.button("Cerrar Sesión"):
-        del st.session_state["authenticated"]; st.rerun()
+def cargar_datos():
+    gc = conectar_gs()
+    if not gc: return pd.DataFrame(), None
+    try:
+        sh = gc.open("Gestion_Magallan")
+        ws = sh.worksheet("Saldos_Simples")
+        df = pd.DataFrame(ws.get_all_records())
+        if 'Estado' not in df.columns: df['Estado'] = 'Pendiente'
+        df['Monto_Total'] = pd.to_numeric(df['Monto_Total'], errors='coerce').fillna(0)
+        df['Anticipo'] = pd.to_numeric(df['Anticipo'], errors='coerce').fillna(0)
+        df['Saldo'] = df['Monto_Total'] - df['Anticipo']
+        df['Fecha_Creacion'] = pd.to_datetime(df['Fecha_Creacion'], errors='coerce')
+        df['Días_Fabricación'] = (datetime.now() - df['Fecha_Creacion']).dt.days.fillna(0).astype(int)
+        df['Es_Corp'] = df['Corporativa'].astype(str).str.upper() == "SI"
+        return df, ws
+    except Exception as e:
+        st.error(f"Error cargando Excel: {e}")
+        return pd.DataFrame(), None
 
-    # --- PANEL DE CONTROL ---
-    if nav == "📋 Panel de Control":
-        df, ws = traer_datos("Proyectos")
-        st.title("📋 Estado de Planta y Logística")
-        filtro = st.text_input("🔍 Buscar por Cliente o Localidad...")
+def fmt(n): return f"$ {n:,.0f}".replace(",", ".")
+
+# --- 3. DASHBOARD ---
+df, ws = cargar_datos()
+
+if df is not None and not df.empty:
+    st.sidebar.header("🔍 Filtros")
+    ver_completados = st.sidebar.checkbox("Ver trabajos COMPLETADOS")
+    v_sel = st.sidebar.selectbox("Vendedor", ["Todos"] + sorted(list(df[df['Es_Corp']==False]['Vendedor'].unique())))
+    
+    df['Estado_Limpio'] = df['Estado'].apply(lambda x: 'Completado' if str(x).strip() == 'Completado' else 'Pendiente')
+    estado_filtro = 'Completado' if ver_completados else 'Pendiente'
+    
+    # Base filtrada por estado
+    df_base = df[df['Estado_Limpio'] == estado_filtro].copy()
+    
+    st.title("📊 Magallan Intelligence Pro")
+
+    # MÉTRICAS SEPARADAS
+    df_solo_vendedores = df_base[df_base['Es_Corp'] == False]
+    df_solo_corp = df_base[df_base['Es_Corp'] == True]
+
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.metric("VENTAS VENDEDORES", fmt(df_solo_vendedores['Monto_Total'].sum()))
+        st.caption(f"Deuda: {fmt(df_solo_vendedores['Saldo'].sum())}")
+    with m2:
+        st.metric("VENTAS CORPORATIVAS", fmt(df_solo_corp['Monto_Total'].sum()))
+        st.caption(f"Deuda: {fmt(df_solo_corp['Saldo'].sum())}")
+    with m3:
+        total_gral = df_base['Monto_Total'].sum()
+        st.metric("TOTAL GENERAL", fmt(total_gral))
+        st.caption(f"Pendiente Cobro: {fmt(df_base['Saldo'].sum())}")
+
+    st.divider()
+
+    # GRÁFICOS (Solo Vendedores para no mezclar)
+    st.subheader("📈 Rendimiento de Equipo (Sin Corp.)")
+    g1, g2, g3 = st.columns(3)
+    
+    # Aplicar filtro de vendedor solo a los gráficos de equipo
+    df_graficos = df_solo_vendedores.copy()
+    if v_sel != "Todos":
+        df_graficos = df_graficos[df_graficos['Vendedor'] == v_sel]
+
+    with g1:
+        st.plotly_chart(px.pie(df_graficos, values='Monto_Total', names='Vendedor', title="Cuota Ventas", hole=0.5, color='Vendedor', color_discrete_map=COLORES_VENDEDORES), use_container_width=True)
+    with g2:
+        st.plotly_chart(px.pie(df_graficos, values='Monto_Total', names='Facturado', title="Facturación Vendedores", color='Facturado', color_discrete_map={"Facturado": "#A7F3D0", "No Facturado": "#FCA5A5"}), use_container_width=True)
+    with g3:
+        df_rank = df_graficos.groupby('Vendedor')['Anticipo'].sum().reset_index()
+        st.plotly_chart(px.bar(df_rank, y='Vendedor', x='Anticipo', orientation='h', title="Ranking Cobranza Equipo", color='Vendedor', color_discrete_map=COLORES_VENDEDORES), use_container_width=True)
+
+    st.divider()
+
+    # OPERATIVA
+    col_l, col_r = st.columns([1.7, 1.3])
+
+    with col_l:
+        st.subheader("📑 Gestión de Cartera")
+        busc = st.text_input("🔍 Buscar cliente...")
         
-        if not df.empty:
-            for _, r in df.iterrows():
-                # Búsqueda en nombre o ubicación
-                if filtro.lower() in str(r['Cliente']).lower() or filtro.lower() in str(r.get('Ubicacion','')).lower():
-                    # Lógica de Saldos y Colores
-                    total = int(r['Monto_Total_Ars'])
-                    pago = int(r.get('Pagado_Ars', 0)) if str(r.get('Pagado_Ars')).isdigit() else 0
-                    saldo = total - pago
-                    
-                    try: vence = pd.to_datetime(r['Fecha_Entrega'], dayfirst=True).date() < date.today()
-                    except: vence = False
-                    
-                    # Determinar color
-                    if saldo <= 0: clase = "status-pagado"
-                    elif str(r['Estado_Fabricacion']).lower() in ["terminado", "entregado"]: clase = "status-terminado"
-                    elif vence: clase = "status-atrasado"
-                    else: clase = "status-proceso"
-                    
-                    st.markdown(f"""
-                        <div class='ticket-card {clase}'>
-                            <b>MAG-{r['Nro_Ppto']}</b> | {r['Cliente']} | 📍 {r.get('Ubicacion', 'S/D')} | 
-                            <b>Saldo: ${saldo}</b>
+        # Filtro final para la lista (Vendedor + Búsqueda)
+        df_lista = df_base.copy()
+        if v_sel != "Todos":
+            df_lista = df_lista[(df_lista['Vendedor'] == v_sel) | (df_lista['Es_Corp'] == True)]
+        
+        df_v = df_lista[df_lista.apply(lambda r: busc.lower() in str(r.values).lower(), axis=1)] if busc else df_lista
+        
+        for i, r in df_v.sort_values(by='Fecha_Creacion', ascending=False).iterrows():
+            dias_f = int(r['Días_Fabricación'])
+            clase = "card-corp" if r['Es_Corp'] else ("card-demora" if dias_f > 15 else "card-vendedor")
+            monto_clase = "monto-corp" if r['Es_Corp'] else "monto-alerta"
+
+            st.markdown(f"""
+                <div class="{clase}">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div style="flex:2;">
+                            <b>{r['Cliente']}</b> {' [CORP]' if r['Es_Corp'] else ''} {'✅' if r['Estado_Limpio'] == 'Completado' else ''}<br>
+                            <small>Ppto: {r['Nro_Ppto']} | {r['Vendedor']}</small><br>
+                            <small>{'⚠️ DEMORA: ' + str(dias_f) + ' DÍAS' if dias_f > 15 else 'Hace ' + str(dias_f) + ' días'}</small>
                         </div>
-                        """, unsafe_allow_html=True)
+                        <div style="text-align:right;">
+                            <small>Total: {fmt(r['Monto_Total'])}</small><br>
+                            <span class="{monto_clase}">Saldo: {fmt(r['Saldo'])}</span>
+                        </div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
             
-            st.markdown("---")
-            seleccion = st.selectbox("Seleccione Obra para Detalle/PDF:", ["---"] + [f"{r['Nro_Ppto']} - {r['Cliente']}" for _, r in df.iterrows()])
-            
-            if seleccion != "---":
-                ppto_id = str(seleccion.split(" - ")[0])
-                tk = df[df['Nro_Ppto'].astype(str) == ppto_id].iloc[0]
-                
-                c_form, c_pdf = st.columns([2, 1])
-                with c_form:
-                    with st.form("edicion_final"):
-                        f_u = st.text_input("Localidad / Ubicación", value=tk.get('Ubicacion', ''))
-                        f_m = st.number_input("Monto Total ($)", value=int(tk['Monto_Total_Ars']))
-                        f_p = st.number_input("Pagado ($)", value=int(tk.get('Pagado_Ars', 0) if str(tk.get('Pagado_Ars')).isdigit() else 0))
-                        f_i = st.selectbox("IVA", ["sin iva", "iva 21%"], index=0 if "sin" in str(tk['IVA']).lower() else 1)
-                        f_n = st.text_area("Notas Técnicas", value=tk['Materiales_Pendientes'])
-                        
-                        if st.form_submit_button("GUARDAR CAMBIOS"):
-                            idx = df[df['Nro_Ppto'].astype(str) == ppto_id].index[0] + 2
-                            ws.update_cell(idx, 6, f_m); ws.update_cell(idx, 7, f_p)
-                            ws.update_cell(idx, 8, f_i); ws.update_cell(idx, 10, f_n); ws.update_cell(idx, 11, f_u)
-                            traer_datos("Historial")[1].append_row([ppto_id, datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state['user'], "Actualización General"])
-                            st.success("Dato Guardado"); st.rerun()
-
-                with c_pdf:
-                    st.markdown("<div class='sidebar-mag'>", unsafe_allow_html=True)
-                    s_actual = f_m - f_p
-                    if s_actual <= 0: st.success("✅ TOTALMENTE PAGADO")
-                    else: st.warning(f"⚠️ PENDIENTE: ${s_actual}")
-                    
-                    st.download_button("📄 GENERAR ORDEN PDF", data=generar_pdf_orden(tk), file_name=f"MAG_{ppto_id}.pdf", use_container_width=True)
-                    st.markdown("---")
-                    est_n = st.selectbox("Estado", ["Esperando", "Preparacion", "Terminado", "Entregado"], index=["Esperando", "Preparacion", "Terminado", "Entregado"].index(tk['Estado_Fabricacion']))
-                    if st.button("ACTUALIZAR ESTADO", use_container_width=True):
-                        idx = df[df['Nro_Ppto'].astype(str) == ppto_id].index[0] + 2
-                        ws.update_cell(idx, 3, est_n)
-                        traer_datos("Historial")[1].append_row([ppto_id, datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state['user'], f"Estado: {est_n}"])
+            with st.expander(f"Editar {r['Cliente']}"):
+                n_total = st.number_input("Monto Total:", value=float(r['Monto_Total']), key=f"t_{i}")
+                n_pago = st.number_input("Anticipo/Pago:", value=float(r['Anticipo']), key=f"p_{i}")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("💾 Guardar", key=f"s_{i}"):
+                        ws.update_cell(i+2, 4, n_total) 
+                        ws.update_cell(i+2, 5, n_pago)
                         st.rerun()
-                    st.markdown("</div>", unsafe_allow_html=True)
+                with c2:
+                    label = "⏪ Reabrir" if r['Estado_Limpio'] == 'Completado' else "🏁 Completar"
+                    nuevo_st = "Pendiente" if r['Estado_Limpio'] == 'Completado' else "Completado"
+                    if st.button(label, key=f"st_{i}"):
+                        ws.update_cell(i+2, 10, nuevo_st) 
+                        st.rerun()
 
-    # --- REPORTE SEMANAL ---
-    elif nav == "📈 Reportes":
-        st.title("📈 Rendimiento del Taller")
-        df_h, _ = traer_datos("Historial")
-        if not df_h.empty:
-            df_h['f'] = pd.to_datetime(df_h['Fecha_Hora'], dayfirst=True, errors='coerce')
-            df_h = df_h.dropna(subset=['f'])
-            st.plotly_chart(px.bar(df_h['Usuario'].value_counts().reset_index(), x='Usuario', y='count', title="Acciones por Usuario"))
-
-    # --- NUEVA OBRA ---
-    elif nav == "➕ Nueva Carga":
-        with st.form("nuevo"):
-            st.subheader("Alta de Presupuesto")
-            n = st.text_input("Número Ppto")
-            c = st.text_input("Cliente")
-            u = st.text_input("Localidad")
-            m = st.number_input("Total", min_value=0)
-            p = st.number_input("Seña", min_value=0)
-            i = st.selectbox("IVA", ["sin iva", "iva 21%"])
-            if st.form_submit_button("CREAR"):
-                traer_datos("Proyectos")[1].append_row([n, c, "Esperando", date.today().strftime("%d/%m/%Y"), date.today().strftime("%d/%m/%Y"), m, p, i, "", "", u])
-                st.success("Creado correctamente")
+    with col_r:
+        st.subheader("📝 Nuevo Registro")
+        with st.form("alta", clear_on_submit=True):
+            f_crea = st.date_input("Fecha", datetime.now())
+            f_ppto = st.text_input("Nro Ppto")
+            f_cli = st.text_input("Cliente")
+            f_ven = st.selectbox("Vendedor Asignado", ["Jacqueline", "Jonathan", "Roberto", "Corporativo"])
+            f_tot = st.number_input("Monto Total $", min_value=0.0)
+            f_ant = st.number_input("Anticipo $", min_value=0.0)
+            f_corp = st.checkbox("¿Es Cuenta Corporativa?")
+            if st.form_submit_button("REGISTRAR"):
+                ws.append_row([f_crea.strftime("%Y-%m-%d"), f_ppto, f_cli, f_tot, f_ant, f_ven, "No Facturado", datetime.now().strftime("%Y-%m-%d"), "SI" if f_corp else "NO", "Pendiente"])
+                st.balloons(); st.rerun()
+else:
+    st.warning("No se detectan datos.")
